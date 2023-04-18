@@ -1,3 +1,4 @@
 /.venv
 /check
 /.vscode
+/.vector_cache

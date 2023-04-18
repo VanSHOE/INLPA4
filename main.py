@@ -1,7 +1,10 @@
 from icecream import ic
 import torchtext
+from torchtext.vocab import GloVe
 from tqdm import tqdm
 from datasets import load_dataset
+
+GLOVE_DIM = 200
 
 datasetMain = load_dataset("sst")
 datasetMain = datasetMain.remove_columns(["tokens", "tree"])
@@ -41,3 +44,16 @@ def tokenizeDataset(dataset):
 
 datasetMain = cleanDataset(datasetLocal)
 datasetMain = tokenizeDataset(datasetMain)
+vocabulary = torchtext.vocab.build_vocab_from_iterator(
+    [row["tokens"] for row in datasetMain["train"]], specials=["<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
+
+ic(vocabulary.get_itos()[0:10])
+print("Vocabulary size: ", len(vocabulary))
+glove = GloVe(name="twitter.27B", dim=GLOVE_DIM)
+vocabSet = set(vocabulary.get_itos())
+gloveSet = set(glove.stoi.keys())
+intersections = vocabSet.intersection(gloveSet)
+vocabulary = torchtext.vocab.build_vocab_from_iterator([[intersection] for intersection in intersections], specials=[
+                                                       "<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
+ic(vocabulary.get_itos()[0:30])
+print("Vocabulary size: ", len(vocabulary))
