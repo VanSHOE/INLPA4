@@ -6,7 +6,8 @@ from datasets import load_dataset
 import torch
 from torch.utils.data import DataLoader, Dataset
 import os
-
+import numpy as np
+from sklearn.metrics import classification_report
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 BATCH_SIZE = 32
@@ -23,7 +24,9 @@ datasetLocal = {"train": [], "validation": [], "test": []}
 for st in sets:
     for i, row in enumerate(tqdm(datasetMain[st])):
         datasetLocal[st].append(
-            {"sentence": row["sentence"], "label": row["label"]})
+            {"sentence": row["sentence"], "label": np.round(row["label"]).astype(int)})
+
+ic(datasetLocal["train"][0:10])
 
 
 def cleanDataset(dataset):
@@ -89,6 +92,7 @@ print("Vocabulary size after intersection: ", len(vocabulary))
 
 class SSTDataset(Dataset):
     def __init__(self, dataset, vocabulary):
+        super().__init__()
         self.dataset = dataset
         self.vocabulary = vocabulary
 
@@ -96,27 +100,7 @@ class SSTDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        return torch.tensor([self.vocabulary[token] for token in self.dataset[idx]["tokens"]]).to(device), self.dataset[idx]["label"]
-
-
-class SSTDatasetLM(Dataset):
-    def __init__(self, dataset, vocabulary):
-        self.dataset = dataset
-        self.vocabulary = vocabulary
-        self.sentences = []
-        for row in self.dataset:
-            # use window size
-            if len(row["tokens"]) < WINDOW_SIZE:
-                continue
-
-            for i in range(len(row["tokens"]) - WINDOW_SIZE + 1):
-                self.sentences.append(row["tokens"][i:i+WINDOW_SIZE])
-
-    def __len__(self):
-        return len(self.sentences)
-
-    def __getitem__(self, idx):
-        return torch.tensor([self.vocabulary[token] for token in self.sentences[idx]]).to(device)
+        return torch.tensor([self.vocabulary[token] for token in self.dataset[idx]["tokens"]]).to(device), torch.tensor(self.dataset[idx]["label"]).to(device)
 
 
 class ELMo(torch.nn.Module):
@@ -136,25 +120,35 @@ class ELMo(torch.nn.Module):
         self.final = torch.nn.Linear(h, self.vocab_size)
         self.finalWeights = torch.nn.Parameter(torch.randn((1, 3)).to(device))
 
+        self.classifier = torch.nn.Linear(2 * h, 2)
+
     def forward(self, x, mode="train"):
         embed = self.embedding(x)
-
-        f1, _ = self.f1(embed)
-        b1, _ = self.b1(torch.flip(embed, [1]))
-        b1 = torch.flip(b1, [1])
-
-        f2, _ = self.f2(f1)
-        b2, _ = self.b2(torch.flip(b1, [1]))
-        b2 = torch.flip(b2, [1])
-
         if mode == "train":
+            f1, _ = self.f1(embed)
+            b1, _ = self.b1(torch.flip(embed, [1]))
+            b1 = torch.flip(b1, [1])
+
+            f2, _ = self.f2(f1)
+            b2, _ = self.b2(torch.flip(b1, [1]))
+            b2 = torch.flip(b2, [1])
             return self.final(f2), self.final(b2)
 
-        concatHidden1 = torch.cat((f1, b1), dim=2)
-        concatHidden2 = torch.cat((f2, b2), dim=2)
-        stacked = torch.stack(
-            (concatHidden1, concatHidden2, embed.repeat(1, 1, 2)), dim=3)
-        return torch.matmul(stacked, self.finalWeights)
+        else:
+
+            f1, _ = self.f1(embed)
+            b1, _ = self.b1(torch.flip(embed, [1]))
+            b1 = torch.flip(b1, [1])
+
+            f2, _ = self.f2(f1)
+            b2, _ = self.b2(torch.flip(b1, [1]))
+            b2 = torch.flip(b2, [1])
+
+            concatHidden1 = torch.cat((f1, b1), dim=2)
+            concatHidden2 = torch.cat((f2, b2), dim=2)
+            stacked = torch.stack(
+                (concatHidden1, concatHidden2, embed.repeat(1, 1, 2)), dim=2)
+            return torch.matmul(self.finalWeights, stacked)
 
 
 def train(model, trainData, valData):
@@ -168,7 +162,7 @@ def train(model, trainData, valData):
     for epoch in range(EPOCHS):
         model.train()
         ELoss = 0
-        print("Epoch: ", epoch)
+        print("Epoch: ", epoch + 1)
         pbar = tqdm(
             dataLoader, desc=f"Pre-Training")
         cur = 0
@@ -231,10 +225,112 @@ def train(model, trainData, valData):
             prevValLoss = ELoss_V
 
 
-elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
-# if os.path.exists("elmo.pt"):
-#     elmo.load_state_dict(torch.load("elmo.pt"))
+def trainClassification(model, trainData, valData):
+    totalLoss = 0
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
-    datasetMain["validation"], vocabulary))
+    dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
+    prevLoss = 999999999
+    prevValLoss = 999999999
+    for epoch in range(EPOCHS):
+        model.train()
+        ELoss = 0
+        print("Epoch: ", epoch + 1)
+        pbar = tqdm(
+            dataLoader, desc=f"Finetuning")
+        cur = 0
+        for (sentence, label) in pbar:
+            optimizer.zero_grad()
+            seqLen = mx + 2
+            state = torch.sum(model(sentence, mode="classify"), dim=1)
+            score = model.classifier(state).squeeze()
+
+            loss = criterion(score, label)
+
+            loss.backward()
+            optimizer.step()
+
+            ELoss += loss.item()
+            cur += 1
+
+            pbar.set_description(
+                f"Finetuning | Loss: {ELoss / cur : .10f}")
+
+        prevLoss = ELoss
+
+        with torch.no_grad():
+            model.eval()
+            ELoss_V = 0
+            dataLoaderV = DataLoader(
+                valData, batch_size=BATCH_SIZE, shuffle=True)
+            pbar = tqdm(
+                dataLoaderV, desc=f"Validation")
+            cur = 0
+            for (sentence, label) in pbar:
+                seqLen = mx + 2
+                state = torch.sum(model(sentence, mode="classify"), dim=1)
+                score = model.classifier(state).squeeze()
+
+                loss = criterion(score, label)
+                ELoss_V += loss.item()
+
+                cur += 1
+
+                pbar.set_description(
+                    f"Validation | Loss: {ELoss_V / cur : .10f}")
+
+            if prevValLoss > ELoss_V:
+                torch.save(model.state_dict(), "elmoFinal.pt")
+
+            prevValLoss = ELoss_V
+
+
+def testModel(model, testDataset):
+    model.eval()
+    dataLoader = DataLoader(testDataset, batch_size=BATCH_SIZE, shuffle=True)
+    trueVals = np.array([])
+    predVals = np.array([])
+    with torch.no_grad():
+        for (sentence, label) in tqdm(dataLoader, desc="Testing"):
+            seqLen = mx + 2
+            state = torch.sum(model(sentence, mode="classify"), dim=1)
+            score = model.classifier(state).squeeze()
+            # ic(score.shape, label.shape)
+            # exit(0)
+            pred = torch.argmax(score, dim=1)
+            trueVals = np.append(trueVals, label.cpu().numpy())
+            predVals = np.append(predVals, pred.cpu().numpy())
+
+    print(classification_report(trueVals, predVals))
+
+
+elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
+if not os.path.exists("elmo.pt"):
+    train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
+        datasetMain["validation"], vocabulary))
 elmo.load_state_dict(torch.load("elmo.pt"))
+
+for param in elmo.f1.parameters():
+    param.requires_grad = False
+
+for param in elmo.f2.parameters():
+    param.requires_grad = False
+
+for param in elmo.b1.parameters():
+    param.requires_grad = False
+
+for param in elmo.b2.parameters():
+    param.requires_grad = False
+
+if not os.path.exists("elmoFinal.pt"):
+    trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
+        datasetMain["validation"], vocabulary))
+elmo.load_state_dict(torch.load("elmoFinal.pt"))
+print("Testing")
+testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
+
+print("Training")
+testModel(elmo, SSTDataset(datasetMain["train"], vocabulary))
+ic(elmo.classifier.weight)
+ic(elmo.finalWeights)
