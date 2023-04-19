@@ -4,10 +4,16 @@ from torchtext.vocab import GloVe
 from tqdm import tqdm
 from datasets import load_dataset
 import torch
+from torch.utils.data import DataLoader, Dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+BATCH_SIZE = 32
 GLOVE_DIM = 200
+WINDOW_SIZE = 5
+LEARNING_RATE = 0.001
+HIDDEN_SIZE = GLOVE_DIM
+EPOCHS = 10
 
 datasetMain = load_dataset("sst")
 datasetMain = datasetMain.remove_columns(["tokens", "tree"])
@@ -38,9 +44,9 @@ def cleanDataset(dataset):
 def tokenizeDataset(dataset):
     print("Tokenizing dataset...")
     tokenizer = torchtext.data.utils.get_tokenizer("basic_english")
-    for set in sets:
-        for i, row in enumerate(tqdm(dataset[set])):
-            dataset[set][i]["tokens"] = tokenizer(row["sentence"])
+    for st in sets:
+        for i, row in enumerate(tqdm(dataset[st])):
+            dataset[st][i]["tokens"] = tokenizer(row["sentence"])
 
     return dataset
 
@@ -50,22 +56,23 @@ datasetMain = tokenizeDataset(datasetMain)
 vocabulary = torchtext.vocab.build_vocab_from_iterator(
     [row["tokens"] for row in datasetMain["train"]], specials=["<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
 
+
 mx = 0
-for set in sets:
-    for i, row in enumerate(tqdm(datasetMain[set], desc="Calculating max length")):
+for st in sets:
+    for i, row in enumerate(tqdm(datasetMain[st], desc="Calculating max length")):
         mx = max(mx, len(row["tokens"]))
-
+print("Max length: ", mx)
 # pad
-for set in sets:
-    for i, row in enumerate(tqdm(datasetMain[set], desc="Padding "+set)):
+for st in sets:
+    for i, row in enumerate(tqdm(datasetMain[st], desc="Padding "+st)):
         # eos and sos
-        datasetMain[set][i]["tokens"] = ["<sos>"] + \
-            datasetMain[set][i]["tokens"] + ["<eos>"]
-        datasetMain[set][i]["tokens"] = ["<pad>"] * \
-            (mx + 2 - len(datasetMain[set][i]["tokens"])) + \
-            datasetMain[set][i]["tokens"]
+        datasetMain[st][i]["tokens"] = ["<sos>"] + \
+            datasetMain[st][i]["tokens"] + ["<eos>"]
+        datasetMain[st][i]["tokens"] = ["<pad>"] * \
+            (mx + 2 - len(datasetMain[st][i]["tokens"])) + \
+            datasetMain[st][i]["tokens"]
 
-ic(vocabulary.get_itos()[0:10])
+# ic(vocabulary.get_itos()[0:10])
 print("Vocabulary size: ", len(vocabulary))
 glove = GloVe(name="twitter.27B", dim=GLOVE_DIM)
 vocabSet = set(vocabulary.get_itos())
@@ -73,8 +80,42 @@ gloveSet = set(glove.stoi.keys())
 intersections = vocabSet.intersection(gloveSet)
 vocabulary = torchtext.vocab.build_vocab_from_iterator([[intersection] for intersection in intersections], specials=[
                                                        "<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
-ic(vocabulary.get_itos()[0:30])
-print("Vocabulary size: ", len(vocabulary))
+
+vocabulary.set_default_index(vocabulary["<unk>"])
+# ic(vocabulary.get_itos()[0:30])
+print("Vocabulary size after intersection: ", len(vocabulary))
+
+
+class SSTDataset(Dataset):
+    def __init__(self, dataset, vocabulary):
+        self.dataset = dataset
+        self.vocabulary = vocabulary
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return torch.tensor([self.vocabulary[token] for token in self.dataset[idx]["tokens"]]).to(device), self.dataset[idx]["label"]
+
+
+class SSTDatasetLM(Dataset):
+    def __init__(self, dataset, vocabulary):
+        self.dataset = dataset
+        self.vocabulary = vocabulary
+        self.sentences = []
+        for row in self.dataset:
+            # use window size
+            if len(row["tokens"]) < WINDOW_SIZE:
+                continue
+
+            for i in range(len(row["tokens"]) - WINDOW_SIZE + 1):
+                self.sentences.append(row["tokens"][i:i+WINDOW_SIZE])
+
+    def __len__(self):
+        return len(self.sentences)
+
+    def __getitem__(self, idx):
+        return torch.tensor([self.vocabulary[token] for token in self.sentences[idx]]).to(device)
 
 
 class ELMo(torch.nn.Module):
@@ -113,3 +154,40 @@ class ELMo(torch.nn.Module):
         stacked = torch.stack(
             (concatHidden1, concatHidden2, embed.repeat(1, 1, 2)), dim=3)
         return torch.matmul(stacked, self.finalWeights)
+
+
+def train(model, trainData):
+    model.train()
+    totalLoss = 0
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
+
+    for epoch in range(EPOCHS):
+        ELoss = 0
+        for i, (sentence, label) in enumerate(tqdm(dataLoader, desc="Training")):
+
+            optimizer.zero_grad()
+            seqLen = mx + 2
+            f, b = model(sentence, mode="train")
+            f = f[:, :seqLen - 1, :]
+            b = b[:, :seqLen - 1, :]
+            fTruth = sentence[:, 1:].to(device)
+            bTruth = sentence[:, :-1].to(device)
+
+            fLoss = criterion(f.contiguous(
+            ).view(-1, f.shape[2]), fTruth.contiguous().view(-1))
+            bLoss = criterion(b.contiguous(
+            ).view(-1, b.shape[2]), bTruth.contiguous().view(-1))
+
+            loss = fLoss + bLoss
+            ELoss += loss.item()
+            loss.backward()
+            optimizer.step()
+
+        print("Epoch: ", epoch, " Loss: ", ELoss / len(dataLoader))
+
+
+elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
+train(elmo, SSTDataset(datasetMain["train"], vocabulary))
