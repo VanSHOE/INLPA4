@@ -50,6 +50,21 @@ datasetMain = tokenizeDataset(datasetMain)
 vocabulary = torchtext.vocab.build_vocab_from_iterator(
     [row["tokens"] for row in datasetMain["train"]], specials=["<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
 
+mx = 0
+for set in sets:
+    for i, row in enumerate(tqdm(datasetMain[set], desc="Calculating max length")):
+        mx = max(mx, len(row["tokens"]))
+
+# pad
+for set in sets:
+    for i, row in enumerate(tqdm(datasetMain[set], desc="Padding "+set)):
+        # eos and sos
+        datasetMain[set][i]["tokens"] = ["<sos>"] + \
+            datasetMain[set][i]["tokens"] + ["<eos>"]
+        datasetMain[set][i]["tokens"] = ["<pad>"] * \
+            (mx + 2 - len(datasetMain[set][i]["tokens"])) + \
+            datasetMain[set][i]["tokens"]
+
 ic(vocabulary.get_itos()[0:10])
 print("Vocabulary size: ", len(vocabulary))
 glove = GloVe(name="twitter.27B", dim=GLOVE_DIM)
@@ -80,10 +95,10 @@ class ELMo(torch.nn.Module):
         self.finalWeights = torch.nn.Parameter(torch.randn((1, 3)).to(device))
 
     def forward(self, x, mode="train"):
-        x = self.embedding(x)
+        embed = self.embedding(x)
 
-        f1, _ = self.f1(x)
-        b1, _ = self.b1(torch.flip(x, [1]))
+        f1, _ = self.f1(embed)
+        b1, _ = self.b1(torch.flip(embed, [1]))
         b1 = torch.flip(b1, [1])
 
         f2, _ = self.f2(f1)
@@ -92,3 +107,9 @@ class ELMo(torch.nn.Module):
 
         if mode == "train":
             return self.final(f2), self.final(b2)
+
+        concatHidden1 = torch.cat((f1, b1), dim=2)
+        concatHidden2 = torch.cat((f2, b2), dim=2)
+        stacked = torch.stack(
+            (concatHidden1, concatHidden2, embed.repeat(1, 1, 2)), dim=3)
+        return torch.matmul(stacked, self.finalWeights)
