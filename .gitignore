@@ -2,3 +2,4 @@
 /check
 /.vscode
 /.vector_cache
+*.pt

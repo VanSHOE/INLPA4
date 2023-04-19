@@ -5,6 +5,7 @@ from tqdm import tqdm
 from datasets import load_dataset
 import torch
 from torch.utils.data import DataLoader, Dataset
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -53,8 +54,6 @@ def tokenizeDataset(dataset):
 
 datasetMain = cleanDataset(datasetLocal)
 datasetMain = tokenizeDataset(datasetMain)
-vocabulary = torchtext.vocab.build_vocab_from_iterator(
-    [row["tokens"] for row in datasetMain["train"]], specials=["<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
 
 
 mx = 0
@@ -72,6 +71,8 @@ for st in sets:
             (mx + 2 - len(datasetMain[st][i]["tokens"])) + \
             datasetMain[st][i]["tokens"]
 
+vocabulary = torchtext.vocab.build_vocab_from_iterator(
+    [row["tokens"] for row in datasetMain["train"]], specials=["<unk>", "<eos>", "<sos>", "<pad>"], special_first=True)
 # ic(vocabulary.get_itos()[0:10])
 print("Vocabulary size: ", len(vocabulary))
 glove = GloVe(name="twitter.27B", dim=GLOVE_DIM)
@@ -156,18 +157,22 @@ class ELMo(torch.nn.Module):
         return torch.matmul(stacked, self.finalWeights)
 
 
-def train(model, trainData):
-    model.train()
+def train(model, trainData, valData):
     totalLoss = 0
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
-
+    prevLoss = 999999999
+    prevValLoss = 999999999
     for epoch in range(EPOCHS):
+        model.train()
         ELoss = 0
-        for i, (sentence, label) in enumerate(tqdm(dataLoader, desc="Training")):
-
+        print("Epoch: ", epoch)
+        pbar = tqdm(
+            dataLoader, desc=f"Pre-Training")
+        cur = 0
+        for (sentence, label) in pbar:
             optimizer.zero_grad()
             seqLen = mx + 2
             f, b = model(sentence, mode="train")
@@ -183,11 +188,53 @@ def train(model, trainData):
 
             loss = fLoss + bLoss
             ELoss += loss.item()
+            cur += 1
+
+            pbar.set_description(
+                f"Pre-Training | Loss: {ELoss / cur : .10f}")
             loss.backward()
             optimizer.step()
 
-        print("Epoch: ", epoch, " Loss: ", ELoss / len(dataLoader))
+        prevLoss = ELoss
+
+        with torch.no_grad():
+            model.eval()
+            ELoss_V = 0
+            dataLoaderV = DataLoader(
+                valData, batch_size=BATCH_SIZE, shuffle=True)
+            pbar = tqdm(
+                dataLoaderV, desc=f"Validation")
+            cur = 0
+            for (sentence, label) in pbar:
+                seqLen = mx + 2
+                f, b = model(sentence, mode="train")
+                f = f[:, :seqLen - 1, :]
+                b = b[:, :seqLen - 1, :]
+                fTruth = sentence[:, 1:].to(device)
+                bTruth = sentence[:, :-1].to(device)
+
+                fLoss = criterion(f.contiguous(
+                ).view(-1, f.shape[2]), fTruth.contiguous().view(-1))
+                bLoss = criterion(b.contiguous(
+                ).view(-1, b.shape[2]), bTruth.contiguous().view(-1))
+
+                loss = fLoss + bLoss
+                ELoss_V += loss.item()
+                cur += 1
+
+                pbar.set_description(
+                    f"Validation | Loss: {ELoss_V / cur : .10f}")
+
+            if prevValLoss > ELoss_V:
+                torch.save(model.state_dict(), "elmo.pt")
+
+            prevValLoss = ELoss_V
 
 
 elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
-train(elmo, SSTDataset(datasetMain["train"], vocabulary))
+# if os.path.exists("elmo.pt"):
+#     elmo.load_state_dict(torch.load("elmo.pt"))
+
+train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
+    datasetMain["validation"], vocabulary))
+elmo.load_state_dict(torch.load("elmo.pt"))
