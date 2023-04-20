@@ -12,10 +12,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 BATCH_SIZE = 32
 GLOVE_DIM = 200
-WINDOW_SIZE = 5
 LEARNING_RATE = 0.001
-HIDDEN_SIZE = GLOVE_DIM
-EPOCHS = 10
+HIDDEN_SIZE = 200
+EPOCHS = 50
 
 datasetMain = load_dataset("sst")
 datasetMain = datasetMain.remove_columns(["tokens", "tree"])
@@ -124,31 +123,20 @@ class ELMo(torch.nn.Module):
 
     def forward(self, x, mode="train"):
         embed = self.embedding(x)
-        if mode == "train":
-            f1, _ = self.f1(embed)
-            b1, _ = self.b1(torch.flip(embed, [1]))
-            b1 = torch.flip(b1, [1])
+        f1, _ = self.f1(embed)
+        b1, _ = self.b1(torch.flip(embed, [1]))
+        b1 = torch.flip(b1, [1])
 
-            f2, _ = self.f2(f1)
-            b2, _ = self.b2(torch.flip(b1, [1]))
-            b2 = torch.flip(b2, [1])
+        f2, _ = self.f2(f1)
+        b2, _ = self.b2(torch.flip(b1, [1]))
+        b2 = torch.flip(b2, [1])
+        if mode == "train":
             return self.final(f2), self.final(b2)
 
-        else:
+        concatHidden1 = torch.cat((f1, b1), dim=2)
+        concatHidden2 = torch.cat((f2, b2), dim=2)
 
-            f1, _ = self.f1(embed)
-            b1, _ = self.b1(torch.flip(embed, [1]))
-            b1 = torch.flip(b1, [1])
-
-            f2, _ = self.f2(f1)
-            b2, _ = self.b2(torch.flip(b1, [1]))
-            b2 = torch.flip(b2, [1])
-
-            concatHidden1 = torch.cat((f1, b1), dim=2)
-            concatHidden2 = torch.cat((f2, b2), dim=2)
-            stacked = torch.stack(
-                (concatHidden1, concatHidden2, embed.repeat(1, 1, 2)), dim=2)
-            return torch.matmul(self.finalWeights, stacked)
+        return self.finalWeights[0][0] * concatHidden1 + self.finalWeights[0][1] * concatHidden2 + self.finalWeights[0][2] * embed.repeat(1, 1, 2)
 
 
 def train(model, trainData, valData):
@@ -170,7 +158,7 @@ def train(model, trainData, valData):
             optimizer.zero_grad()
             seqLen = mx + 2
             f, b = model(sentence, mode="train")
-            f = f[:, :seqLen - 1, :]
+            f = f[:, 1:, :]
             b = b[:, :seqLen - 1, :]
             fTruth = sentence[:, 1:].to(device)
             bTruth = sentence[:, :-1].to(device)
@@ -202,7 +190,7 @@ def train(model, trainData, valData):
             for (sentence, label) in pbar:
                 seqLen = mx + 2
                 f, b = model(sentence, mode="train")
-                f = f[:, :seqLen - 1, :]
+                f = f[:, 1:, :]
                 b = b[:, :seqLen - 1, :]
                 fTruth = sentence[:, 1:].to(device)
                 bTruth = sentence[:, :-1].to(device)
@@ -219,8 +207,8 @@ def train(model, trainData, valData):
                 pbar.set_description(
                     f"Validation | Loss: {ELoss_V / cur : .10f}")
 
-            if prevValLoss > ELoss_V:
-                torch.save(model.state_dict(), "elmo.pt")
+            # if prevValLoss > ELoss_V:
+            #     torch.save(model.state_dict(), "elmo.pt")
 
             prevValLoss = ELoss_V
 
@@ -242,13 +230,15 @@ def trainClassification(model, trainData, valData):
         cur = 0
         for (sentence, label) in pbar:
             optimizer.zero_grad()
+
             seqLen = mx + 2
             state = torch.sum(model(sentence, mode="classify"), dim=1)
-            score = model.classifier(state).squeeze()
+            score = model.classifier(state)
 
             loss = criterion(score, label)
 
             loss.backward()
+
             optimizer.step()
 
             ELoss += loss.item()
@@ -280,8 +270,8 @@ def trainClassification(model, trainData, valData):
                 pbar.set_description(
                     f"Validation | Loss: {ELoss_V / cur : .10f}")
 
-            if prevValLoss > ELoss_V:
-                torch.save(model.state_dict(), "elmoFinal.pt")
+            # if prevValLoss > ELoss_V:
+            #     torch.save(model.state_dict(), "elmoFinal.pt")
 
             prevValLoss = ELoss_V
 
@@ -305,11 +295,15 @@ def testModel(model, testDataset):
     print(classification_report(trueVals, predVals))
 
 
-elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
 if not os.path.exists("elmo.pt"):
+    elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
     train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-elmo.load_state_dict(torch.load("elmo.pt"))
+    # save entire model not just dict
+    torch.save(elmo, "elmo.pt")
+
+elmo = torch.load("elmo.pt")
+vocabulary = elmo.vocab
 
 for param in elmo.f1.parameters():
     param.requires_grad = False
@@ -326,11 +320,9 @@ for param in elmo.b2.parameters():
 if not os.path.exists("elmoFinal.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-elmo.load_state_dict(torch.load("elmoFinal.pt"))
+# elmo.load_state_dict(torch.load("elmoFinal.pt"))
 print("Testing")
 testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
 
 print("Training")
 testModel(elmo, SSTDataset(datasetMain["train"], vocabulary))
-ic(elmo.classifier.weight)
-ic(elmo.finalWeights)
