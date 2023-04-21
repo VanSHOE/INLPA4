@@ -7,8 +7,12 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 import os
 import numpy as np
+import time
+import pickle as pkl
 from sklearn.metrics import classification_report
+import plotly.express as px
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 BATCH_SIZE = 32
 GLOVE_DIM = 200
@@ -17,23 +21,13 @@ HIDDEN_SIZE = 200
 EPOCHS = 50
 
 datasetMain = load_dataset("multi_nli")
-
 datasetMain = datasetMain.filter(lambda x: x["label"] != -1)
 
 datasetMain = datasetMain.remove_columns(
     ["promptID", "pairID", "genre", 'premise_binary_parse', 'premise_parse', 'hypothesis_binary_parse', 'hypothesis_parse'])
 ic(datasetMain)
 
-exit(0)
-
-sets = ["train", "validation_matched", "validation_mismatched"]
-datasetLocal = {"train": [], "validation_matched": [],
-                "validation_mismatched": []}
-for st in sets:
-    for i, row in enumerate(tqdm(datasetMain[st])):
-        datasetLocal[st].append(
-            {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": np.round(row["label"]).astype(int)})
-
+sets = ["train", "validation", "test"]
 
 
 def cleanDataset(dataset):
@@ -43,12 +37,16 @@ def cleanDataset(dataset):
     for set in sets:
         for i, row in enumerate(tqdm(dataset[set])):
             for symbol in crapSymbols:
-                dataset[set][i]["sentence"] = row["sentence"].replace(
+                dataset[set][i]["premise"] = row["premise"].replace(
+                    symbol, " ")
+                dataset[set][i]["hypothesis"] = row["hypothesis"].replace(
                     symbol, " ")
 
             # extra space removal
-            dataset[set][i]["sentence"] = " ".join(
-                dataset[set][i]["sentence"].split())
+            dataset[set][i]["premise"] = " ".join(
+                dataset[set][i]["premise"].split())
+            dataset[set][i]["hypothesis"] = " ".join(
+                dataset[set][i]["hypothesis"].split())
     return dataset
 
 
@@ -57,20 +55,74 @@ def tokenizeDataset(dataset):
     tokenizer = torchtext.data.utils.get_tokenizer("basic_english")
     for st in sets:
         for i, row in enumerate(tqdm(dataset[st])):
-            dataset[st][i]["tokens"] = tokenizer(row["sentence"])
+            dataset[st][i]["tokens_p"] = tokenizer(row["premise"])
+            dataset[st][i]["tokens_h"] = tokenizer(row["hypothesis"])
 
     return dataset
 
 
-datasetMain = cleanDataset(datasetLocal)
-datasetMain = tokenizeDataset(datasetMain)
+def pruneDataset(dataset):
+    print("Pruning dataset...")
+    newDataset = {"train": [], "validation": [], "test": []}
+    for st in sets:
+        for i, row in enumerate(tqdm(dataset[st])):
+            if len(row["tokens_p"]) <= 50 and len(row["tokens_h"]) <= 50:
+                newDataset[st].append(row)
+
+    return newDataset
 
 
+if os.path.exists("datasetLocal.pkl"):
+    datasetMain = pkl.load(open("datasetLocal.pkl", "rb"))
+    ic("Loaded datasetLocal from file")
+else:
+    datasetLocal = {"train": [], "validation": [], "test": []}
+    for i, row in enumerate(tqdm(datasetMain["train"], desc="train")):
+        if i < np.ceil(len(datasetMain["train"]) * 0.8):
+            datasetLocal["train"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+        else:
+            datasetLocal["test"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+    for i, row in enumerate(tqdm(datasetMain["validation_matched"], desc="validation_matched")):
+        if i < np.ceil(len(datasetMain["validation_matched"]) * 0.8):
+            datasetLocal["validation"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+        else:
+            datasetLocal["test"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+
+    for i, row in enumerate(tqdm(datasetMain["validation_mismatched"], desc="validation_mismatched")):
+        if i < np.ceil(len(datasetMain["validation_mismatched"]) * 0.8):
+            datasetLocal["validation"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+        else:
+            datasetLocal["test"].append(
+                {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": row["label"]})
+
+    datasetMain = cleanDataset(datasetLocal)
+    datasetMain = tokenizeDataset(datasetMain)
+    datasetMain = pruneDataset(datasetMain)
+    pkl.dump(datasetMain, open("datasetLocal.pkl", "wb"))
+
+ic(len(datasetMain["train"]))
+ic(len(datasetMain["validation"]))
+ic(len(datasetMain["test"]))
+
+ic(datasetMain["train"][:2])
+lengths = []
 mx = 0
 for st in sets:
     for i, row in enumerate(tqdm(datasetMain[st], desc="Calculating max length")):
-        mx = max(mx, len(row["tokens"]))
+        mx = max(mx, len(row["tokens_p"]), len(row["tokens_h"]))
+        lengths.append(len(row["tokens_p"]))
+        lengths.append(len(row["tokens_h"]))
 print("Max length: ", mx)
+# plotly histogram
+fig = px.histogram(x=lengths, nbins=1000)
+# html
+fig.write_html("histogram.html")
+exit()
 # pad
 for st in sets:
     for i, row in enumerate(tqdm(datasetMain[st], desc="Padding "+st)):

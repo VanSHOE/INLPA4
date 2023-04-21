@@ -3,3 +3,5 @@
 /.vscode
 /.vector_cache
 *.pt
+*.pkl
+*.html
