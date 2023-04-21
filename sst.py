@@ -320,7 +320,10 @@ for param in elmo.b2.parameters():
 if not os.path.exists("elmoFinal.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-# elmo.load_state_dict(torch.load("elmoFinal.pt"))
+    torch.save(elmo, "elmoFinal_sst.pt")
+
+elmo = torch.load("elmoFinal_sst.pt")
+
 print("Testing")
 testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
 

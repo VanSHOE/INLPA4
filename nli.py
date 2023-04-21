@@ -22,6 +22,9 @@ datasetMain = datasetMain.filter(lambda x: x["label"] != -1)
 
 datasetMain = datasetMain.remove_columns(
     ["promptID", "pairID", "genre", 'premise_binary_parse', 'premise_parse', 'hypothesis_binary_parse', 'hypothesis_parse'])
+ic(datasetMain)
+
+exit(0)
 
 sets = ["train", "validation_matched", "validation_mismatched"]
 datasetLocal = {"train": [], "validation_matched": [],
@@ -31,9 +34,6 @@ for st in sets:
         datasetLocal[st].append(
             {"premise": row["premise"], "hypothesis": row["hypothesis"], "label": np.round(row["label"]).astype(int)})
 
-ic(datasetLocal["train"][0:10])
-
-exit(0)
 
 
 def cleanDataset(dataset):
@@ -308,9 +308,9 @@ if not os.path.exists("elmo.pt"):
     train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
     # save entire model not just dict
-    torch.save(elmo, "elmo.pt")
+    torch.save(elmo, "elmon.pt")
 
-elmo = torch.load("elmo.pt")
+elmo = torch.load("elmon.pt")
 vocabulary = elmo.vocab
 
 for param in elmo.f1.parameters():
@@ -328,7 +328,9 @@ for param in elmo.b2.parameters():
 if not os.path.exists("elmoFinal.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-# elmo.load_state_dict(torch.load("elmoFinal.pt"))
+    torch.save(elmo, "elmoFinalnli.pt")
+elmo = torch.load("elmoFinalnli.pt")
+
 print("Testing")
 testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
 
