@@ -317,7 +317,7 @@ for param in elmo.b1.parameters():
 for param in elmo.b2.parameters():
     param.requires_grad = False
 
-if not os.path.exists("elmoFinal.pt"):
+if not os.path.exists("elmoFinal_sst.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
     torch.save(elmo, "elmoFinal_sst.pt")
