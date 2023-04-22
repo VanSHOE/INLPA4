@@ -18,7 +18,8 @@ BATCH_SIZE = 32
 GLOVE_DIM = 200
 LEARNING_RATE = 0.001
 HIDDEN_SIZE = 200
-EPOCHS = 5
+EPOCHSLM = 10
+EPOCHSCLASS = 100
 
 datasetMain = load_dataset("multi_nli")
 datasetMain = datasetMain.filter(lambda x: x["label"] != -1)
@@ -261,7 +262,7 @@ def train(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
-    for epoch in range(EPOCHS):
+    for epoch in range(EPOCHSLM):
         model.train()
         ELoss = 0
         print("Epoch: ", epoch + 1)
@@ -335,7 +336,7 @@ def trainClassification(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
-    for epoch in range(EPOCHS):
+    for epoch in range(EPOCHSCLASS):
         model.train()
         ELoss = 0
         print("Epoch: ", epoch + 1)
