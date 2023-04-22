@@ -9,7 +9,8 @@ import os
 import numpy as np
 import time
 import pickle as pkl
-from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 import plotly.express as px
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -387,7 +388,7 @@ def trainClassification(model, trainData, valData):
             prevValLoss = ELoss_V
 
 
-def testModel(model, testDataset):
+def testModel(model, testDataset, test=True):
     model.eval()
     dataLoader = DataLoader(testDataset, batch_size=BATCH_SIZE, shuffle=True)
     trueVals = np.array([])
@@ -402,6 +403,14 @@ def testModel(model, testDataset):
             predVals = np.append(predVals, pred.cpu().numpy())
 
     print(classification_report(trueVals, predVals))
+    if test:
+        confusion = confusion_matrix(trueVals, predVals)
+        cm = ConfusionMatrixDisplay(confusion)
+        cm.plot()
+        # save
+        plt.savefig("confusionNLI.png")
+        # clear plt
+        plt.clf()
 
 
 if not os.path.exists("elmon.pt"):
@@ -437,4 +446,4 @@ print("Testing")
 testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
 
 print("Training")
-testModel(elmo, SSTDataset(datasetMain["train"], vocabulary))
+testModel(elmo, SSTDataset(datasetMain["train"], vocabulary), test=False)

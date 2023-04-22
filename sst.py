@@ -7,7 +7,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 import os
 import numpy as np
-from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, roc_curve, confusion_matrix, ConfusionMatrixDisplay
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 BATCH_SIZE = 32
@@ -276,11 +277,12 @@ def trainClassification(model, trainData, valData):
             prevValLoss = ELoss_V
 
 
-def testModel(model, testDataset):
+def testModel(model, testDataset, test=True):
     model.eval()
     dataLoader = DataLoader(testDataset, batch_size=BATCH_SIZE, shuffle=True)
     trueVals = np.array([])
     predVals = np.array([])
+    predValProbs = np.array([])
     with torch.no_grad():
         for (sentence, label) in tqdm(dataLoader, desc="Testing"):
             seqLen = mx + 2
@@ -288,11 +290,31 @@ def testModel(model, testDataset):
             score = model.classifier(state).squeeze()
             # ic(score.shape, label.shape)
             # exit(0)
+
+            probs = torch.softmax(score, dim=1)[:, 1]
+
             pred = torch.argmax(score, dim=1)
             trueVals = np.append(trueVals, label.cpu().numpy())
             predVals = np.append(predVals, pred.cpu().numpy())
+            predValProbs = np.append(predValProbs, probs.cpu().numpy())
 
     print(classification_report(trueVals, predVals))
+    if test:
+        confusion = confusion_matrix(trueVals, predVals)
+        cm = ConfusionMatrixDisplay(confusion)
+        cm.plot()
+        # save
+        plt.savefig("confusionSST.png")
+        # clear plt
+        plt.clf()
+        # ic(predValProbs.shape, trueVals.shape)
+        roc = roc_curve(trueVals, predValProbs, pos_label=1)
+        # axis names
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.plot(roc[0], roc[1])
+
+        plt.savefig("rocSST.png")
 
 
 if not os.path.exists("elmo.pt"):
@@ -328,4 +350,4 @@ print("Testing")
 testModel(elmo, SSTDataset(datasetMain["test"], vocabulary))
 
 print("Training")
-testModel(elmo, SSTDataset(datasetMain["train"], vocabulary))
+testModel(elmo, SSTDataset(datasetMain["train"], vocabulary), test=False)
