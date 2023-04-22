@@ -10,7 +10,7 @@ import numpy as np
 import time
 import pickle as pkl
 import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
 import plotly.express as px
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -393,15 +393,25 @@ def testModel(model, testDataset, test=True):
     dataLoader = DataLoader(testDataset, batch_size=BATCH_SIZE, shuffle=True)
     trueVals = np.array([])
     predVals = np.array([])
+    # probs 2d array
+    probsVals = []
     with torch.no_grad():
         for (sentence, label) in tqdm(dataLoader, desc="Testing"):
             seqLen = mx + 2
             score = model(sentence, mode="classify")
+            probs = torch.softmax(score, dim=1)
+            probs = probs.cpu()
+            probsVals.extend(probs.numpy())
             # exit(0)
             pred = torch.argmax(score, dim=1)
             trueVals = np.append(trueVals, label.cpu().numpy())
             predVals = np.append(predVals, pred.cpu().numpy())
 
+    probsVals = np.array(probsVals)
+    # ic(probsVals.shape)
+    # ic(trueVals.shape)
+    # ic(predVals.shape)
+    # exit(0)
     print(classification_report(trueVals, predVals))
     if test:
         confusion = confusion_matrix(trueVals, predVals)
@@ -411,6 +421,15 @@ def testModel(model, testDataset, test=True):
         plt.savefig("confusionNLI.png")
         # clear plt
         plt.clf()
+
+        for pos in range(3):
+            fpr, tpr, _ = roc_curve(trueVals == pos, probsVals[:, pos])
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+            plt.title("ROC Curve")
+            plt.plot(fpr, tpr)
+            plt.savefig(f"rocNLI_pos={pos}.png")
+            plt.clf()
 
 
 if not os.path.exists("elmon.pt"):
