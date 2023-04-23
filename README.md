@@ -29,3 +29,8 @@ To train and save ELMo model on nli dataset, run the `nli.py` script with the fo
 To use pretrained models, just ensure that the models are in the same directory as the scripts and the scripts will automatically load the models otherwise they will train the models from scratch.
 
 Big Files: https://1drv.ms/f/s!AlS9diCw3ZVTqS4HspsCAn_O28kM?e=BKQiwm
+
+## Clarifications confirmed from TAs:
+
+1. Pre-processing only involves tokenization in this assignment, not lemmatization and removing stop words.
+2. For multi-ROC, 3 graphs are prepared, assuming each class as positive once.
