@@ -15,11 +15,8 @@ There are two files for the ELMo model:
 1. `sst.py`: This file trains the ELMo model on the sst dataset and saves the trained model to disk.
 2. `nli.py`: This file trains the ELMo model on the nli dataset and saves the trained model to disk.
    Both of these files use the same architecture for the ELMo model but train it on different datasets. The trained models can later be used for downstream tasks such as sentiment analysis and natural language inference.
-   There is one file for the SVD model:
 
 ## Usage
-
-### CBOW
 
 To train and save ELMo model on sst dataset, run the `sst.py` script with the following command:
 
