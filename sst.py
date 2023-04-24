@@ -16,6 +16,7 @@ GLOVE_DIM = 200
 LEARNING_RATE = 0.001
 HIDDEN_SIZE = 200
 EPOCHS = 50
+PATIENCE = 5
 
 datasetMain = load_dataset("sst")
 datasetMain = datasetMain.remove_columns(["tokens", "tree"])
@@ -148,6 +149,7 @@ def train(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
+    curPat = PATIENCE
     for epoch in range(EPOCHS):
         model.train()
         ELoss = 0
@@ -208,8 +210,13 @@ def train(model, trainData, valData):
                 pbar.set_description(
                     f"Validation | Loss: {ELoss_V / cur : .10f}")
 
-            # if prevValLoss > ELoss_V:
-            #     torch.save(model.state_dict(), "elmo.pt")
+            if prevValLoss > ELoss_V:
+                torch.save(model, "elmo.pt")
+                curPat = PATIENCE
+            else:
+                curPat -= 1
+                if curPat == 0:
+                    break
 
             prevValLoss = ELoss_V
 
@@ -222,6 +229,7 @@ def trainClassification(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
+    curPat = PATIENCE
     for epoch in range(EPOCHS):
         model.train()
         ELoss = 0
@@ -271,8 +279,13 @@ def trainClassification(model, trainData, valData):
                 pbar.set_description(
                     f"Validation | Loss: {ELoss_V / cur : .10f}")
 
-            # if prevValLoss > ELoss_V:
-            #     torch.save(model.state_dict(), "elmoFinal.pt")
+            if prevValLoss > ELoss_V:
+                torch.save(model, "elmoFinal_sst.pt")
+                curPat = PATIENCE
+            else:
+                curPat -= 1
+                if curPat == 0:
+                    break
 
             prevValLoss = ELoss_V
 
@@ -321,8 +334,7 @@ if not os.path.exists("elmo.pt"):
     elmo = ELMo(HIDDEN_SIZE, vocabulary, glove.vectors).to(device)
     train(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-    # save entire model not just dict
-    torch.save(elmo, "elmo.pt")
+
 
 elmo = torch.load("elmo.pt")
 vocabulary = elmo.vocab
@@ -342,7 +354,6 @@ for param in elmo.b2.parameters():
 if not os.path.exists("elmoFinal_sst.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-    torch.save(elmo, "elmoFinal_sst.pt")
 
 elmo = torch.load("elmoFinal_sst.pt")
 
