@@ -21,6 +21,7 @@ LEARNING_RATE = 0.001
 HIDDEN_SIZE = 200
 EPOCHSLM = 10
 EPOCHSCLASS = 100
+PATIENCE = 5
 
 datasetMain = load_dataset("multi_nli")
 datasetMain = datasetMain.filter(lambda x: x["label"] != -1)
@@ -263,6 +264,7 @@ def train(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
+    curPat = PATIENCE
     for epoch in range(EPOCHSLM):
         model.train()
         ELoss = 0
@@ -325,6 +327,11 @@ def train(model, trainData, valData):
 
             if prevValLoss > ELoss_V:
                 torch.save(model, "elmon.pt")
+                curPat = PATIENCE
+            else:
+                curPat -= 1
+                if curPat == 0:
+                    break
 
             prevValLoss = ELoss_V
 
@@ -337,6 +344,7 @@ def trainClassification(model, trainData, valData):
     dataLoader = DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
     prevLoss = 999999999
     prevValLoss = 999999999
+    curPat = PATIENCE
     for epoch in range(EPOCHSCLASS):
         model.train()
         ELoss = 0
@@ -382,9 +390,13 @@ def trainClassification(model, trainData, valData):
                 pbar.set_description(
                     f"Validation | Loss: {ELoss_V / cur : .10f}")
 
-            # if prevValLoss > ELoss_V:
-            #     torch.save(model.state_dict(), "elmoFinal.pt")
-
+            if prevValLoss > ELoss_V:
+                torch.save(model, "elmoFinalnli.pt")
+                curPat = PATIENCE
+            else:
+                curPat -= 1
+                if curPat == 0:
+                    break
             prevValLoss = ELoss_V
 
 
@@ -437,8 +449,7 @@ if not os.path.exists("elmon.pt"):
 
     train(elmo, SSTDatasetLM(datasetMain["train"], vocabulary), SSTDatasetLM(
         datasetMain["validation"], vocabulary))
-    # save entire model not just dict
-    torch.save(elmo, "elmon.pt")
+
 
 elmo = torch.load("elmon.pt")
 vocabulary = elmo.vocab
@@ -458,7 +469,7 @@ for param in elmo.b2.parameters():
 if not os.path.exists("elmoFinalnli.pt"):
     trainClassification(elmo, SSTDataset(datasetMain["train"], vocabulary), SSTDataset(
         datasetMain["validation"], vocabulary))
-    torch.save(elmo, "elmoFinalnli.pt")
+
 elmo = torch.load("elmoFinalnli.pt")
 
 print("Testing")
