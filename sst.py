@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report, roc_curve, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import classification_report, roc_curve, confusion_matrix, ConfusionMatrixDisplay, roc_auc_score
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 BATCH_SIZE = 32
@@ -328,6 +328,8 @@ def testModel(model, testDataset, test=True):
         plt.plot(roc[0], roc[1])
 
         plt.savefig("rocSST.png")
+        auc = roc_auc_score(trueVals, predValProbs)
+        print("AUC: ", auc)
 
 
 if not os.path.exists("elmo.pt"):
