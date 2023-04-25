@@ -10,7 +10,7 @@ import numpy as np
 import time
 import pickle as pkl
 import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve, roc_auc_score
 import plotly.express as px
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -442,6 +442,8 @@ def testModel(model, testDataset, test=True):
             plt.plot(fpr, tpr)
             plt.savefig(f"rocNLI_pos={pos}.png")
             plt.clf()
+            auc = roc_auc_score(trueVals == pos, probsVals[:, pos])
+            print(f"AUC for pos {pos} is {auc}")
 
 
 if not os.path.exists("elmon.pt"):
